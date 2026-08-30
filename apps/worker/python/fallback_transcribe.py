@@ -41,7 +41,7 @@ def main() -> int:
     times = librosa.times_like(f0, sr=sr, hop_length=hop_length)
 
     # Segment the pitch track into notes: merge consecutive frames with the
-    # same quantized MIDI pitch; gaps below 80% voicing probability split notes.
+    # same quantized MIDI pitch; frames below 80% voicing probability split notes.
     segments = []
     current = None  # {"pitch": int, "start": float}
 
