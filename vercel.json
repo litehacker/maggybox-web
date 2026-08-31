@@ -1,6 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "installCommand": "npm install",
-  "buildCommand": "npm run build --workspace @maggybox/web",
+  "buildCommand": "sh -c 'if [ -z \"$DATABASE_URL\" ]; then echo \"DATABASE_URL not set; skipping prisma migrate deploy\"; else npm run db:migrate; fi && npm run build --workspace @maggybox/web',
   "outputDirectory": "apps/web/.next"
 }
