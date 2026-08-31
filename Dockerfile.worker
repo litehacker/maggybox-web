@@ -1,0 +1,36 @@
+# MaggyBox queue worker: Node + Python (yt-dlp, basic-pitch/librosa) + ffmpeg.
+# Build context is the monorepo root.
+FROM node:20-bookworm
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 \
+    python3-pip \
+    python3-venv \
+    python3-dev \
+    ffmpeg \
+    libsndfile1 \
+    gcc \
+    g++ \
+  && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+COPY apps/web/package.json apps/web/package.json
+COPY apps/worker/package.json apps/worker/package.json
+COPY packages/contracts/package.json packages/contracts/package.json
+COPY packages/db/package.json packages/db/package.json
+COPY packages/storage/package.json packages/storage/package.json
+COPY packages/db/prisma packages/db/prisma
+
+RUN npm ci
+
+COPY . .
+
+RUN npx prisma generate --schema packages/db/prisma/schema.prisma \
+  && python3 -m pip install --break-system-packages --no-cache-dir -r apps/worker/python/requirements.txt
+
+ENV NODE_ENV=production
+ENV PYTHON_BIN=python3
+
+CMD ["npm", "run", "start", "--workspace", "@maggybox/worker"]

@@ -27,7 +27,10 @@ function run(
   timeoutMs = 30 * 60 * 1000,
 ): Promise<{ code: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    const child = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(cmd, args, {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, PYTHONIOENCODING: "utf-8", PYTHONUTF8: "1" },
+    });
     let stdout = "";
     let stderr = "";
     const timer = setTimeout(() => {
@@ -69,8 +72,8 @@ async function basicPitch(wavPath: string, workDir: string): Promise<Buffer | nu
   await mkdir(outDir, { recursive: true });
 
   const attempts: Array<{ cmd: string; args: string[] }> = [
-    { cmd: "basic-pitch", args: [outDir, wavPath] },
-    { cmd: pythonBin, args: ["-m", "basic_pitch", outDir, wavPath] },
+    { cmd: pythonBin, args: ["-m", "basic_pitch.predict", "--model-serialization", "onnx", outDir, wavPath] },
+    { cmd: "basic-pitch", args: ["--model-serialization", "onnx", outDir, wavPath] },
   ];
 
   let lastError: string | null = null;

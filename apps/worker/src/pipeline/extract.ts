@@ -5,12 +5,69 @@
  * transcodes to 22.05 kHz mono WAV for transcription. MAX_VIDEO_SECONDS is
  * enforced against the stream metadata before download.
  */
+import { createRequire } from "node:module";
 import { spawn } from "node:child_process";
 import { mkdir, readdir } from "node:fs/promises";
 import path from "node:path";
 
 import type { ErrorCode } from "@maggybox/contracts";
 import { config } from "../config.js";
+
+const require = createRequire(import.meta.url);
+
+function optionalStringModule(id: string): string | null {
+  try {
+    const mod = require(id) as unknown;
+    return typeof mod === "string" ? mod : null;
+  } catch {
+    return null;
+  }
+}
+
+function optionalPathModule(id: string): string | null {
+  try {
+    const mod = require(id) as { path?: string };
+    return typeof mod?.path === "string" ? mod.path : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Resolve CLI tools from env, npm-bundled binaries, or PATH. */
+export function resolveTool(name: "yt-dlp" | "ffmpeg" | "ffprobe"): string {
+  if (name === "ffmpeg") {
+    return process.env.FFMPEG_BIN || optionalStringModule("ffmpeg-static") || "ffmpeg";
+  }
+  if (name === "ffprobe") {
+    return process.env.FFPROBE_BIN || optionalPathModule("ffprobe-static") || "ffprobe";
+  }
+  return process.env.YTDLP_BIN || "yt-dlp";
+}
+
+/** Drop playlist/radio params so yt-dlp fetches the single public watch URL. */
+function canonicalWatchUrl(youtubeUrl: string): string {
+  try {
+    const parsed = new URL(youtubeUrl);
+    const id = parsed.searchParams.get("v");
+    if (id) return `https://www.youtube.com/watch?v=${id}`;
+  } catch {
+    // keep the original string
+  }
+  return youtubeUrl;
+}
+
+/**
+ * YouTube now requires a JS challenge solver (EJS). Node is already on the
+ * worker host; pass it explicitly so yt-dlp does not fall back to a player
+ * client that reports public videos as UNPLAYABLE.
+ */
+function ytDlpArgs(...extra: string[]): string[] {
+  const args = ["--js-runtimes", `node:${process.execPath}`, "--no-playlist", "--no-warnings"];
+  const ffmpeg = resolveTool("ffmpeg");
+  if (ffmpeg !== "ffmpeg") args.push("--ffmpeg-location", ffmpeg);
+  args.push(...extra);
+  return args;
+}
 
 export class PipelineError extends Error {
   constructor(
@@ -68,10 +125,18 @@ function run(cmd: string, args: string[], timeoutMs = 15 * 60 * 1000): Promise<R
 }
 
 const VIDEO_UNAVAILABLE_RE =
-  /video unavailable|private video|sign in to confirm|members-only|removed by the uploader|age.?restricted|not available in your country|premieres? in/i;
+  /this video is private|private video|members-only|removed by the uploader|age.?restricted|not available in your country|premieres? in|account associated with this video has been terminated/i;
 
 function classifyDownloadFailure(stderr: string): PipelineError {
-  if (VIDEO_UNAVAILABLE_RE.test(stderr)) {
+  // "This video is not available" is also what yt-dlp prints when the JS
+  // challenge solver is missing — that is DOWNLOAD_FAILED, not a private video.
+  const challengeFailed = /js runtime|challenge solver|ejs|player response playability status: unplayable/i.test(
+    stderr,
+  );
+  if (!challengeFailed && VIDEO_UNAVAILABLE_RE.test(stderr)) {
+    return new PipelineError("VIDEO_UNAVAILABLE", "Video is unavailable or access-restricted");
+  }
+  if (!challengeFailed && /video unavailable|video is not available/i.test(stderr)) {
     return new PipelineError("VIDEO_UNAVAILABLE", "Video is unavailable or access-restricted");
   }
   return new PipelineError("DOWNLOAD_FAILED", `yt-dlp failed: ${stderr.slice(-300).trim()}`);
@@ -80,7 +145,7 @@ function classifyDownloadFailure(stderr: string): PipelineError {
 async function probeDurationSec(file: string): Promise<number | null> {
   try {
     const { stdout } = await run(
-      "ffprobe",
+      resolveTool("ffprobe"),
       ["-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", file],
       60_000,
     );
@@ -93,23 +158,20 @@ async function probeDurationSec(file: string): Promise<number | null> {
 
 export async function extractAudio(youtubeUrl: string, workDir: string): Promise<ExtractResult> {
   await mkdir(workDir, { recursive: true });
+  const watchUrl = canonicalWatchUrl(youtubeUrl);
 
   // 1) Metadata + duration (also fails fast for unavailable/private videos).
   let info: { duration?: number; title?: string };
   try {
     const { stdout } = await run(
-      "yt-dlp",
-      ["--dump-single-json", "--no-warnings", "--no-playlist", youtubeUrl],
+      resolveTool("yt-dlp"),
+      ytDlpArgs("--dump-single-json", watchUrl),
       120_000,
     );
     info = JSON.parse(stdout) as { duration?: number; title?: string };
   } catch (err) {
-    if (err instanceof PipelineError) {
-      // Re-classify raw yt-dlp failures; run() tagged them DOWNLOAD_FAILED.
-      const isYtdlp = err.message.startsWith("yt-dlp");
-      if (isYtdlp && !VIDEO_UNAVAILABLE_RE.test(err.message)) {
-        throw classifyDownloadFailure(err.message);
-      }
+    if (err instanceof PipelineError && /yt-dlp/i.test(err.message)) {
+      throw classifyDownloadFailure(err.message);
     }
     throw err;
   }
@@ -124,17 +186,12 @@ export async function extractAudio(youtubeUrl: string, workDir: string): Promise
 
   // 2) Download bestaudio to the transient work dir.
   try {
-    await run("yt-dlp", [
-      "-f",
-      "bestaudio/best",
-      "--no-playlist",
-      "--no-warnings",
-      "-o",
-      path.join(workDir, "source.%(ext)s"),
-      youtubeUrl,
-    ]);
+    await run(
+      resolveTool("yt-dlp"),
+      ytDlpArgs("-f", "bestaudio/best", "-o", path.join(workDir, "source.%(ext)s"), watchUrl),
+    );
   } catch (err) {
-    if (err instanceof PipelineError && err.message.startsWith("yt-dlp")) {
+    if (err instanceof PipelineError && /yt-dlp/i.test(err.message)) {
       throw classifyDownloadFailure(err.message);
     }
     throw err;
@@ -160,7 +217,7 @@ export async function extractAudio(youtubeUrl: string, workDir: string): Promise
   // 3) Transcode to 22.05 kHz mono WAV (transcription input format).
   const wavPath = path.join(workDir, "audio.wav");
   try {
-    await run("ffmpeg", ["-y", "-i", sourcePath, "-vn", "-ac", "1", "-ar", "22050", wavPath], 10 * 60 * 1000);
+    await run(resolveTool("ffmpeg"), ["-y", "-i", sourcePath, "-vn", "-ac", "1", "-ar", "22050", wavPath], 10 * 60 * 1000);
   } catch (err) {
     if (err instanceof PipelineError) {
       throw new PipelineError("DOWNLOAD_FAILED", `ffmpeg transcode failed: ${err.message}`);

@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "prisma generate --schema ../../packages/db/prisma/schema.prisma && next build",
-    "start": "next start"
+    "start": "next start --hostname 0.0.0.0"
   },
   "dependencies": {
     "@maggybox/contracts": "*",

@@ -1,0 +1,6 @@
+yt-dlp[default]
+basic-pitch[onnx]
+librosa
+pretty_midi
+soundfile
+numpy

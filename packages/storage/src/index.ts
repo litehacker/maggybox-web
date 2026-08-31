@@ -10,6 +10,7 @@
  *                    using HMAC-signed, short-lived URLs.
  */
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { existsSync } from "node:fs";
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { AwsClient } from "aws4fetch";
@@ -70,8 +71,28 @@ export function verifyLocalSignature(key: string, expires: string | null, signat
   }
 }
 
+/**
+ * Resolve the monorepo root so web (cwd: apps/web) and worker (cwd: apps/worker)
+ * share the same on-disk artifact store. Relative LOCAL_STORAGE_DIR values are
+ * interpreted from this root, not from process.cwd().
+ */
+function repoRoot(): string {
+  const isRoot = (dir: string): boolean =>
+    existsSync(path.join(dir, "packages", "storage")) && existsSync(path.join(dir, "apps", "web"));
+
+  let dir = process.cwd();
+  for (let i = 0; i < 8; i += 1) {
+    if (isRoot(dir)) return dir;
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return process.cwd();
+}
+
 function localRoot(): string {
-  return path.resolve(process.env.LOCAL_STORAGE_DIR ?? "./.data/artifacts");
+  const raw = process.env.LOCAL_STORAGE_DIR ?? "./.data/artifacts";
+  return path.isAbsolute(raw) ? raw : path.resolve(repoRoot(), raw);
 }
 
 const localDriver: ObjectStorage = {
@@ -121,7 +142,8 @@ function s3Config() {
   }
   const endpoint = process.env.S3_ENDPOINT; // e.g. https://accountid.r2.cloudflarestorage.com
   const region = process.env.S3_REGION ?? "auto";
-  return { bucket, accessKeyId, secretAccessKey, endpoint, region };
+  const urlStyle = (process.env.S3_URL_STYLE ?? "path").toLowerCase();
+  return { bucket, accessKeyId, secretAccessKey, endpoint, region, urlStyle };
 }
 
 function s3Client(cfg: ReturnType<typeof s3Config>): AwsClient {
@@ -136,6 +158,10 @@ function s3Client(cfg: ReturnType<typeof s3Config>): AwsClient {
 function s3ObjectUrl(cfg: ReturnType<typeof s3Config>, key: string): URL {
   const encodedKey = key.split("/").map(encodeURIComponent).join("/");
   if (cfg.endpoint) {
+    if (cfg.urlStyle === "virtual-host" || cfg.urlStyle === "virtual_host") {
+      const endpoint = new URL(cfg.endpoint);
+      return new URL(`${endpoint.protocol}//${cfg.bucket}.${endpoint.host}/${encodedKey}`);
+    }
     // Path-style for S3-compatible providers (R2, MinIO, …).
     return new URL(`${cfg.endpoint.replace(/\/$/, "")}/${cfg.bucket}/${encodedKey}`);
   }

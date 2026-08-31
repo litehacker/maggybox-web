@@ -14,6 +14,64 @@ import librosa
 import pretty_midi
 
 
+def _normalize(y: np.ndarray) -> np.ndarray:
+    peak = float(np.max(np.abs(y))) if y.size else 0.0
+    if peak <= 0:
+        return y
+    return y / peak * 0.9
+
+
+def _segment(f0: np.ndarray, voiced_prob: np.ndarray, times: np.ndarray, voicing_min: float) -> list[dict]:
+    segments: list[dict] = []
+    current = None
+
+    def close(seg, end: float) -> None:
+        if seg is not None:
+            segments.append({"pitch": seg["pitch"], "start": seg["start"], "end": end})
+
+    last_t = float(times[-1]) if times.size else 0.0
+    for t, f, v in zip(times, f0, voiced_prob):
+        hz = float(f) if f is not None and not np.isnan(f) else None
+        if hz is None or float(v) < voicing_min:
+            close(current, float(t))
+            current = None
+            continue
+        pitch = int(round(float(librosa.hz_to_midi(hz))))
+        pitch = max(0, min(127, pitch))
+        if current is not None and current["pitch"] == pitch:
+            continue
+        close(current, float(t))
+        current = {"pitch": pitch, "start": float(t)}
+    close(current, last_t)
+    return segments
+
+
+def _pyin_notes(y: np.ndarray, sr: int, voicing_min: float) -> list[dict]:
+    hop_length = 256
+    f0, _voiced_flag, voiced_prob = librosa.pyin(
+        y,
+        fmin=librosa.note_to_hz("C2"),
+        fmax=librosa.note_to_hz("C7"),
+        sr=sr,
+        frame_length=2048,
+        hop_length=hop_length,
+    )
+    times = librosa.times_like(f0, sr=sr, hop_length=hop_length)
+    min_dur = 0.05
+    return [s for s in _segment(f0, voiced_prob, times, voicing_min) if s["end"] - s["start"] >= min_dur]
+
+
+def transcribe(y: np.ndarray, sr: int) -> list[dict]:
+    y = _normalize(y)
+    y_harm, _y_perc = librosa.effects.hpss(y)
+    for source in (y_harm, y):
+        for voicing_min in (0.4, 0.2):
+            notes = _pyin_notes(source, sr, voicing_min)
+            if notes:
+                return notes
+    return []
+
+
 def main() -> int:
     if len(sys.argv) != 3:
         print("usage: fallback_transcribe.py <input.wav> <output.mid>", file=sys.stderr)
@@ -21,60 +79,21 @@ def main() -> int:
 
     wav_path, out_path = sys.argv[1], sys.argv[2]
 
-    # 22.05 kHz mono — matches Stage A output.
     y, sr = librosa.load(wav_path, sr=22050, mono=True)
     if y.size == 0:
         print("empty audio", file=sys.stderr)
         return 1
 
-    hop_length = 256
-    frame_length = 2048
-
-    f0, voiced_flag, voiced_prob = librosa.pyin(
-        y,
-        fmin=librosa.note_to_hz("C2"),
-        fmax=librosa.note_to_hz("C7"),
-        sr=sr,
-        frame_length=frame_length,
-        hop_length=hop_length,
-    )
-    times = librosa.times_like(f0, sr=sr, hop_length=hop_length)
-
-    # Segment the pitch track into notes: merge consecutive frames with the
-    # same quantized MIDI pitch; frames below 80% voicing probability split notes.
-    segments = []
-    current = None  # {"pitch": int, "start": float}
-
-    def close(seg, end):
-        if seg is not None:
-            segments.append({"pitch": seg["pitch"], "start": seg["start"], "end": end})
-
-    last_t = float(times[-1]) if times.size else 0.0
-    for t, f, v in zip(times, f0, voiced_prob):
-        if f is None or np.isnan(f) or v < 0.8:
-            close(current, float(t))
-            current = None
-            continue
-        pitch = int(round(float(librosa.hz_to_midi(float(f)))))
-        if current is not None and current["pitch"] == pitch:
-            continue
-        close(current, float(t))
-        current = {"pitch": pitch, "start": float(t)}
-    close(current, last_t)
-
-    # Drop segments too short to sound (quantization noise).
-    min_dur = 0.05
-    segments = [s for s in segments if s["end"] - s["start"] >= min_dur]
-
+    segments = transcribe(y, sr)
     pm = pretty_midi.PrettyMIDI()
-    instrument = pretty_midi.Instrument(program=0)  # acoustic grand
+    instrument = pretty_midi.Instrument(program=0)
     for seg in segments:
         instrument.notes.append(
             pretty_midi.Note(
                 velocity=90,
                 pitch=seg["pitch"],
                 start=seg["start"],
-                end=max(seg["end"], seg["start"] + min_dur),
+                end=max(seg["end"], seg["start"] + 0.05),
             )
         )
     pm.instruments.append(instrument)

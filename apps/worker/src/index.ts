@@ -25,7 +25,7 @@ import {
   setMidiArtifact,
   setProgress,
 } from "./queue.js";
-import { extractAudio, PipelineError } from "./pipeline/extract.js";
+import { extractAudio, PipelineError, resolveTool } from "./pipeline/extract.js";
 import { transcribeToMidi } from "./pipeline/transcribe.js";
 import { buildCylinderSpec, generateCylinderStl, parseMidiNotes } from "./pipeline/cylinder.js";
 
@@ -88,6 +88,9 @@ async function main(): Promise<void> {
   }
   console.log(
     `[worker] started (poll=${config.pollIntervalMs}ms, maxVideo=${config.maxVideoSeconds}s, storage=${getStorage().driver})`,
+  );
+  console.log(
+    `[worker] tools yt-dlp=${resolveTool("yt-dlp")} ffmpeg=${resolveTool("ffmpeg")} python=${config.pythonBin}`,
   );
 
   // eslint-disable-next-line no-constant-condition

@@ -7,17 +7,26 @@
   ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
+    "predev": "node scripts/ensure-dev.mjs",
+    "dev": "concurrently -n web,worker -c cyan,magenta \"npm run dev:web\" \"npm run dev:worker\"",
     "dev:web": "npm run dev --workspace @maggybox/web",
     "dev:worker": "npm run dev --workspace @maggybox/worker",
+    "start": "npm run start --workspace @maggybox/web",
+    "start:web": "npm run start --workspace @maggybox/web",
+    "start:worker": "npm run start --workspace @maggybox/worker",
     "db:migrate": "prisma migrate deploy --schema packages/db/prisma/schema.prisma",
     "db:generate": "prisma generate --schema packages/db/prisma/schema.prisma",
     "typecheck": "tsc --noEmit -p packages/contracts/tsconfig.json && tsc --noEmit -p packages/db/tsconfig.json && tsc --noEmit -p packages/storage/tsconfig.json && tsc --noEmit -p apps/worker/tsconfig.json"
   },
+  "dependencies": {
+    "prisma": "^5.19.1"
+  },
   "devDependencies": {
-    "prisma": "^5.19.1",
+    "concurrently": "^9.1.2",
     "typescript": "^5.5.4"
   },
   "engines": {
     "node": ">=20"
-  }
+  },
+  "packageManager": "npm@10.9.2"
 }
