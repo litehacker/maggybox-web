@@ -5,16 +5,13 @@ generator client {
   provider = "prisma-client-js"
 }
 
-// DATABASE_URL: pooled/runtime connection used by the generated Prisma client.
-// DIRECT_URL:   direct (non-pooled) connection used by the Prisma CLI for
-//               migrations (prisma migrate deploy). Pooled endpoints (e.g.
-//               PgBouncer/transaction mode) do not support the migration
-//               engine. If the database has no separate pooling endpoint,
-//               set DIRECT_URL to the same value as DATABASE_URL.
+// DATABASE_URL: pooled/runtime connection. On Railway, PgBouncer runs in
+// session mode so prisma migrate deploy also works over this URL — no
+// separate direct connection is needed. The runtime client in index.ts
+// sets url explicitly and never reads directUrl.
 datasource db {
   provider  = "postgresql"
   url       = env("DATABASE_URL")
-  directUrl = env("DIRECT_URL")
 }
 
 enum JobStatus {
