@@ -1,6 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "installCommand": "npm install",
-  "buildCommand": "npm run build --workspace @maggybox/web",
+  "buildCommand": "npm run db:migrate && npm run build --workspace @maggybox/web",
   "outputDirectory": "apps/web/.next"
 }
