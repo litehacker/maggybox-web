@@ -65,16 +65,31 @@ interface TempoChange {
   usPerQuarter: number;
 }
 
+/**
+ * The midi-file typings omit `tick` — parseMidi adds it at runtime — so the
+ * parsed events are widened to a local shape that carries it explicitly
+ * (fixes the TS2339/TS2352 build errors on the unparsed event union).
+ */
+interface MidiEvent {
+  type: string;
+  tick: number;
+  microsecondsPerQuarter?: number;
+  velocity?: number;
+  noteNumber?: number;
+  channel?: number;
+}
+
 export function parseMidiNotes(data: Buffer): ParsedNote[] {
   const parsed = parseMidi(data);
   const ticksPerBeat = parsed.header.ticksPerBeat || 480;
+  const tracks = parsed.tracks as unknown as MidiEvent[][];
 
   // Collect tempo changes across all tracks, sorted by absolute tick.
   const tempos: TempoChange[] = [{ tick: 0, usPerQuarter: 500_000 }]; // default 120 BPM
-  for (const track of parsed.tracks) {
+  for (const track of tracks) {
     for (const ev of track) {
-      if (ev.type === "setTempo" && typeof (ev as { microsecondsPerQuarter?: number }).microsecondsPerQuarter === "number") {
-        tempos.push({ tick: ev.tick, usPerQuarter: (ev as { microsecondsPerQuarter: number }).microsecondsPerQuarter });
+      if (ev.type === "setTempo" && typeof ev.microsecondsPerQuarter === "number") {
+        tempos.push({ tick: ev.tick, usPerQuarter: ev.microsecondsPerQuarter });
       }
     }
   }
@@ -95,20 +110,20 @@ export function parseMidiNotes(data: Buffer): ParsedNote[] {
   }
 
   const notes: ParsedNote[] = [];
-  for (const track of parsed.tracks) {
+  for (const track of tracks) {
     const open = new Map<string, { tick: number; note: number; velocity: number }>();
     for (const ev of track) {
-      const isNoteOn = ev.type === "noteOn" && (ev as { velocity: number }).velocity > 0;
+      if (typeof ev.noteNumber !== "number") continue;
+      const note = ev.noteNumber;
+      const velocity = ev.velocity ?? 90;
+      const isNoteOn = ev.type === "noteOn" && velocity > 0;
       const isNoteOff =
-        ev.type === "noteOff" ||
-        (ev.type === "noteOn" && (ev as { velocity: number }).velocity === 0);
-      const note = (ev as { noteNumber?: number }).noteNumber;
-      const ch = (ev as { channel?: number }).channel ?? 0;
-      if (typeof note !== "number") continue;
+        ev.type === "noteOff" || (ev.type === "noteOn" && velocity === 0);
+      const ch = ev.channel ?? 0;
       const key = `${ch}:${note}`;
 
       if (isNoteOn) {
-        open.set(key, { tick: ev.tick, note, velocity: (ev as { velocity: number }).velocity });
+        open.set(key, { tick: ev.tick, note, velocity });
       } else if (isNoteOff) {
         const onEv = open.get(key);
         if (onEv) {
