@@ -50,3 +50,12 @@ Names must match `.env.example`. Sources are defined in the Env contract comment
 
 - CI failures: see the Actions run linked from the PR checks; workspace build errors are attached as `::error` annotations.
 - Vercel build failures (incl. missing env / migration errors): open the deployment from the `vercel[bot]` PR comment or the project's Deployments page for full logs.
+
+## Redeploys (DevOps notes)
+
+- 2026-08-31 (MAG-20): forced a fresh Production redeploy via this docs-only push because the
+  Vercel MCP API was returning HTTP 503 and could not trigger a redeploy directly. The live
+  deployment was suspected of running an older build. Current `main` tip (`bce405e`) removes
+  `directUrl` from the Prisma schema; `DATABASE_URL` is set in Vercel Production (Railway-sourced
+  connection string, confirmed in the Vercel UI). Vercel redeploys Production automatically on
+  every push to `main` via the Git integration — no secrets are involved in this file.
