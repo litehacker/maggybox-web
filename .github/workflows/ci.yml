@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies (npm workspaces)
+        run: npm install
+
+      - name: Prisma generate
+        run: npm run db:generate
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build workspaces (web + worker)
+        id: build
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          : > /tmp/build.log
+          for ws in @maggybox/contracts @maggybox/storage @maggybox/web @maggybox/worker; do
+            echo "=== building $ws ===" | tee -a /tmp/build.log
+            if ! npm run build --workspace "$ws" 2>&1 | tee -a /tmp/build.log; then
+              echo "WORKSPACE_FAILED=$ws" >> /tmp/build.log
+              exit 1
+            fi
+          done
+
+      - name: Expose build errors as annotations
+        if: steps.build.outcome == 'failure'
+        run: |
+          tail -c 6000 /tmp/build.log | tr -d '\r' | sed 's/%/%25/g' > /tmp/tail.raw
+          tr '\n' '\001' < /tmp/tail.raw | sed 's/\001/%0A/g' > /tmp/tail.enc
+          s=$(cat /tmp/tail.enc)
+          total=${#s}
+          chunk=600
+          n=$(((total + chunk - 1) / chunk))
+          for i in $(seq 0 $((n - 1))); do
+            part=$(printf '%s' "$s" | cut -c $((i * chunk + 1))-$(((i + 1) * chunk)))
+            echo "::error title=buildlog-part-$i::$part"
+          done
