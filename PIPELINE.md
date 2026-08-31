@@ -9,7 +9,7 @@ Repo of record is **this repo only**; the legacy `litehacker/maggybox` is archiv
 | --- | --- |
 | Pull request → `main` | GitHub Actions workflow **CI** (`.github/workflows/ci.yml`, job `build`): install (npm workspaces) → `prisma generate` → typecheck → build all workspaces (`@maggybox/contracts`, `@maggybox/storage`, `@maggybox/web`, `@maggybox/worker`). Build failures are surfaced as annotations. In parallel, **Vercel** creates a Preview deployment for the PR and posts the preview URL as a PR comment (`vercel[bot]`). |
 | Merge / push to `main` | Same CI job runs on `main`; Vercel builds and deploys **Production** to https://maggybox-web-three.vercel.app. |
-| Failing CI check | Blocks merge — `build` is a required status check under branch protection for `main` (Settings → Branches → Branch protection → Require status checks → `build`). |
+| Failing CI check | **Should** block merge — `build` must be a required status check under branch protection for `main`. ⚠️ **Not yet enabled** (verified 2026-08-31: `branches/main` → `protection.enabled = false`). Repo admin must do a one-time click: Settings → Branches → Add branch protection rule for `main` → Require status checks to pass → select **`build`** (GitHub Actions). Tracked on MAG-15. |
 
 ## Vercel project
 
@@ -18,6 +18,9 @@ Repo of record is **this repo only**; the legacy `litehacker/maggybox` is archiv
 - Root repo `vercel.json` sets install/build/output commands. Build command is
   `npm run db:migrate && npm run build --workspace @maggybox/web`, so `prisma migrate deploy`
   applies pending migrations to the linked Postgres on **every** deploy (safe: applies only pending migrations).
+- ⚠️ Note: the Vercel dashboard sets the project **Root Directory to `apps/web`**, which makes Vercel use
+  `apps/web/vercel.json` (plain `npm run build`) instead of the root `vercel.json` — meaning the
+  `db:migrate` step may be skipped on deploys. Coordinate with the DB ticket (MAG-9) before changing.
 
 ## Environment variables (never commit values)
 
