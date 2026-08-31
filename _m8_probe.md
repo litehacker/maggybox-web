@@ -1,1 +1,0 @@
-write probe (MAG-8) — will remove
