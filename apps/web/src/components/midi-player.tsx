@@ -1,53 +1,79 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Midi } from "@tonejs/midi";
 import { Pause, Play } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
-export function MidiPlayer({ url }: { url: string }) {
-  const [midi, setMidi] = useState<Midi | null>(null);
-  const [error, setError] = useState<string | null>(null);
+export function MidiPlayer({ src }: { src: string }) {
+  const audioRef = useRef<AudioContext | null>(null);
+  const timerRef = useRef<number | null>(null);
   const [playing, setPlaying] = useState(false);
-  const audio = useRef<AudioContext | null>(null);
-
-  useEffect(() => {
-    let active = true;
-    fetch(url).then((response) => {
-      if (!response.ok) throw new Error("MIDI preview is not ready yet.");
-      return response.arrayBuffer();
-    }).then((buffer) => { if (active) setMidi(new Midi(buffer)); }).catch(() => { if (active) setError("Preview unavailable. You can still download the MIDI file."); });
-    return () => { active = false; void audio.current?.close(); };
-  }, [url]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   function stop() {
-    void audio.current?.close();
-    audio.current = null;
+    if (timerRef.current !== null) window.clearTimeout(timerRef.current);
+    timerRef.current = null;
+    void audioRef.current?.close();
+    audioRef.current = null;
     setPlaying(false);
   }
 
+  useEffect(() => stop, []);
+
   async function play() {
-    if (!midi) return;
-    const context = new AudioContext();
-    audio.current = context;
-    await context.resume();
-    const start = context.currentTime + 0.05;
-    for (const track of midi.tracks) for (const note of track.notes) {
-      const oscillator = context.createOscillator();
-      const gain = context.createGain();
-      oscillator.type = "triangle";
-      oscillator.frequency.value = 440 * Math.pow(2, (note.midi - 69) / 12);
-      gain.gain.setValueAtTime(0, start + note.time);
-      gain.gain.linearRampToValueAtTime(Math.max(0.025, note.velocity * 0.12), start + note.time + 0.01);
-      gain.gain.exponentialRampToValueAtTime(0.001, start + note.time + Math.max(0.08, note.duration));
-      oscillator.connect(gain).connect(context.destination);
-      oscillator.start(start + note.time);
-      oscillator.stop(start + note.time + Math.max(0.1, note.duration) + 0.02);
+    setLoading(true);
+    setError(null);
+    try {
+      const [{ Midi }, response] = await Promise.all([import("@tonejs/midi"), fetch(src)]);
+      if (!response.ok) throw new Error("MIDI is not ready yet.");
+      const midi = new Midi(await response.arrayBuffer());
+      const context = new AudioContext();
+      audioRef.current = context;
+      const startAt = context.currentTime + 0.08;
+      const previewSeconds = Math.min(midi.duration, 30);
+
+      for (const track of midi.tracks) {
+        for (const note of track.notes) {
+          if (note.time > previewSeconds) continue;
+          const oscillator = context.createOscillator();
+          const gain = context.createGain();
+          const begins = startAt + note.time;
+          const ends = begins + Math.min(note.duration, 2.5);
+          oscillator.type = "triangle";
+          oscillator.frequency.value = 440 * Math.pow(2, (note.midi - 69) / 12);
+          gain.gain.setValueAtTime(0.0001, begins);
+          gain.gain.exponentialRampToValueAtTime(Math.max(0.015, note.velocity * 0.12), begins + 0.015);
+          gain.gain.exponentialRampToValueAtTime(0.0001, ends);
+          oscillator.connect(gain).connect(context.destination);
+          oscillator.start(begins);
+          oscillator.stop(ends + 0.02);
+        }
+      }
+
+      setPlaying(true);
+      timerRef.current = window.setTimeout(stop, (previewSeconds + 0.2) * 1000);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not preview this MIDI file.");
+      stop();
+    } finally {
+      setLoading(false);
     }
-    setPlaying(true);
-    window.setTimeout(stop, Math.ceil((midi.duration + 0.25) * 1000));
   }
 
-  if (error) return <p className="text-sm text-muted-foreground">{error}</p>;
-  return <Button type="button" variant="outline" onClick={playing ? stop : play} disabled={!midi}>{playing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}{midi ? (playing ? "Stop preview" : "Preview MIDI") : "Loading preview…"}</Button>;
+  return (
+    <div className="rounded-md border bg-muted/40 p-4">
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <p className="font-semibold">MIDI preview</p>
+          <p className="text-sm text-muted-foreground">Listen to the first 30 seconds in your browser.</p>
+        </div>
+        <Button type="button" variant="outline" onClick={playing ? stop : play} disabled={loading} aria-label={playing ? "Stop MIDI preview" : "Play MIDI preview"}>
+          {playing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+          {loading ? "Loading…" : playing ? "Stop" : "Play"}
+        </Button>
+      </div>
+      {error ? <p className="mt-3 text-sm text-destructive" role="alert">{error}</p> : null}
+    </div>
+  );
 }

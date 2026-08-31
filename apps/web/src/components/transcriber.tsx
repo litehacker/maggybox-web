@@ -1,92 +1,190 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
-import { CreateTranscriptionRequest, ErrorEnvelope, TranscriptionDTO, type ErrorCode, type JobStatus } from "@maggybox/contracts";
-import { AlertCircle, Check, Download, Music2, RotateCcw, Sparkles } from "lucide-react";
-import { MidiPlayer } from "@/components/midi-player";
+import { FormEvent, useEffect, useRef, useState } from "react";
+import { Check, Download, LoaderCircle, Music2, RefreshCw, Sparkles } from "lucide-react";
+import {
+  CreateTranscriptionRequest,
+  ErrorEnvelope,
+  TranscriptionDTO,
+  type JobStatus,
+  type TranscriptionDTO as Transcription,
+} from "@maggybox/contracts";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
+import { MidiPlayer } from "@/components/midi-player";
 
-const STATUS: Record<JobStatus, { label: string; detail: string }> = {
-  queued: { label: "Queued", detail: "Your video is waiting for an available transcriber." },
-  extracting: { label: "Extracting audio", detail: "We’re separating the music from the video." },
-  transcribing: { label: "Transcribing", detail: "Turning the audio into playable MIDI notes." },
-  generating_cylinder: { label: "Building your cylinder", detail: "Laying out notes on a printable music-box cylinder." },
-  done: { label: "Ready", detail: "Your MIDI and printable cylinder are ready." },
-  failed: { label: "Transcription failed", detail: "We couldn’t complete this transcription." },
+const statusCopy: Record<JobStatus, { title: string; detail: string }> = {
+  queued: { title: "Queued", detail: "Your track is waiting for a worker." },
+  extracting: { title: "Extracting audio", detail: "Preparing the audio from your YouTube video." },
+  transcribing: { title: "Transcribing notes", detail: "Turning the melody into a MIDI arrangement." },
+  generating_cylinder: { title: "Building the cylinder", detail: "Laying out the pins for your printable music-box cylinder." },
+  done: { title: "Your music box is ready", detail: "Preview the MIDI, then download both files." },
+  failed: { title: "We couldn’t finish this track", detail: "Try again or use another YouTube video." },
 };
 
-const ERROR_COPY: Record<ErrorCode, string> = {
-  INVALID_URL: "Enter a valid public YouTube URL.", VIDEO_TOO_LONG: "This video is too long for the current limit.", VIDEO_UNAVAILABLE: "This video is private, unavailable, or region-restricted.", DOWNLOAD_FAILED: "We couldn’t extract audio from this video.", TRANSCRIPTION_FAILED: "We couldn’t turn this audio into MIDI.", CYLINDER_FAILED: "The MIDI was created, but the cylinder could not be generated.", NOT_READY: "Your files are still being prepared.", NOT_FOUND: "This transcription could not be found.", INTERNAL: "Something went wrong on our side. Please try again.",
+const friendlyErrors: Record<string, string> = {
+  INVALID_URL: "Paste a valid public YouTube URL.",
+  VIDEO_TOO_LONG: "This video is too long. Choose a shorter track and try again.",
+  VIDEO_UNAVAILABLE: "This video is unavailable or private. Choose a public video.",
+  DOWNLOAD_FAILED: "We couldn’t retrieve the video audio. Please try again.",
+  TRANSCRIPTION_FAILED: "We couldn’t turn this track into MIDI. Try another recording.",
+  CYLINDER_FAILED: "The MIDI is ready, but the cylinder could not be generated.",
+  NOT_READY: "The file is still being prepared. Please wait a moment.",
+  NOT_FOUND: "This transcription could not be found. Start a new one.",
+  INTERNAL: "Something went wrong on our side. Please try again.",
 };
 
-type Screen = "form" | "working" | "done" | "error";
+async function messageFrom(response: Response) {
+  try {
+    const parsed = ErrorEnvelope.safeParse(await response.json());
+    if (parsed.success) return friendlyErrors[parsed.data.error.code] ?? parsed.data.error.message;
+  } catch {}
+  return "We couldn’t reach the transcription service. Please try again.";
+}
 
-async function readError(response: Response): Promise<string> {
-  const data: unknown = await response.json().catch(() => null);
-  const parsed = ErrorEnvelope.safeParse(data);
-  return parsed.success ? ERROR_COPY[parsed.data.error.code] || parsed.data.error.message : "The service is unavailable. Please try again.";
+function assetUrl(job: Transcription, kind: "midi" | "stl") {
+  const supplied = kind === "midi" ? job.midiUrl : job.stlUrl;
+  return supplied || `/api/transcriptions/${job.id}/${kind}`;
 }
 
 export function Transcriber() {
   const [url, setUrl] = useState("");
-  const [screen, setScreen] = useState<Screen>("form");
-  const [job, setJob] = useState<TranscriptionDTO | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
-  const [connectionWarning, setConnectionWarning] = useState(false);
+  const [job, setJob] = useState<Transcription | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const failures = useRef(0);
 
-  const poll = useCallback(async (id: string) => {
-    try {
-      const response = await fetch(`/api/transcriptions/${id}`, { cache: "no-store" });
-      if (!response.ok) throw new Error(await readError(response));
-      const parsed = TranscriptionDTO.safeParse(await response.json());
-      if (!parsed.success) throw new Error("The service returned an unexpected response.");
-      failures.current = 0;
-      setConnectionWarning(false);
-      setJob(parsed.data);
-      if (parsed.data.status === "done") setScreen("done");
-      if (parsed.data.status === "failed") { setMessage(parsed.data.errorMessage || STATUS.failed.detail); setScreen("error"); }
-    } catch (error) {
-      failures.current += 1;
-      setConnectionWarning(true);
-      if (failures.current >= 3) { setMessage(error instanceof Error ? error.message : "Can’t reach the service."); setScreen("error"); }
-    }
-  }, []);
-
   useEffect(() => {
-    if (screen !== "working" || !job) return;
-    const timer = window.setInterval(() => void poll(job.id), 2000);
-    return () => window.clearInterval(timer);
-  }, [job, poll, screen]);
+    if (!job || job.status === "done" || job.status === "failed") return;
+    let active = true;
+    const controller = new AbortController();
+
+    const timer = window.setInterval(async () => {
+      try {
+        const response = await fetch(`/api/transcriptions/${job.id}`, { cache: "no-store", signal: controller.signal });
+        if (!response.ok) throw new Error(await messageFrom(response));
+        const parsed = TranscriptionDTO.safeParse(await response.json());
+        if (!parsed.success) throw new Error("The service returned an unexpected response.");
+        failures.current = 0;
+        if (active) setJob(parsed.data);
+      } catch (cause) {
+        if (controller.signal.aborted) return;
+        failures.current += 1;
+        if (active && failures.current >= 3) {
+          setError(cause instanceof Error ? cause.message : "Connection lost. Please try again.");
+        }
+      }
+    }, 2000);
+
+    return () => {
+      active = false;
+      controller.abort();
+      window.clearInterval(timer);
+    };
+  }, [job?.id, job?.status]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    setMessage(null);
-    const request = CreateTranscriptionRequest.safeParse({ youtubeUrl: url.trim() });
-    if (!request.success) { setMessage("Paste a valid YouTube link, such as youtube.com/watch?v=…"); return; }
-    setScreen("working");
+    setError(null);
+    const parsedInput = CreateTranscriptionRequest.safeParse({ youtubeUrl: url.trim() });
+    if (!parsedInput.success) {
+      setError("Paste a valid YouTube URL, for example https://youtube.com/watch?v=…");
+      return;
+    }
+
+    setSubmitting(true);
     try {
-      const response = await fetch("/api/transcriptions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(request.data) });
-      if (!response.ok) throw new Error(await readError(response));
+      const response = await fetch("/api/transcriptions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(parsedInput.data),
+      });
+      if (!response.ok) throw new Error(await messageFrom(response));
       const parsed = TranscriptionDTO.safeParse(await response.json());
       if (!parsed.success) throw new Error("The service returned an unexpected response.");
+      failures.current = 0;
       setJob(parsed.data);
-      if (parsed.data.status === "done") setScreen("done");
-      else if (parsed.data.status === "failed") { setMessage(parsed.data.errorMessage || STATUS.failed.detail); setScreen("error"); }
-    } catch (error) { setMessage(error instanceof Error ? error.message : "Can’t reach the service."); setScreen("error"); }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Can’t reach the service. Please try again.");
+    } finally {
+      setSubmitting(false);
+    }
   }
 
-  function reset() { failures.current = 0; setUrl(""); setJob(null); setMessage(null); setConnectionWarning(false); setScreen("form"); }
-  const midiUrl = job?.midiUrl || (job ? `/api/transcriptions/${job.id}/midi` : "");
-  const stlUrl = job?.stlUrl || (job ? `/api/transcriptions/${job.id}/stl` : "");
+  function reset() {
+    failures.current = 0;
+    setJob(null);
+    setError(null);
+    setUrl("");
+  }
 
-  return <Card className="w-full max-w-2xl overflow-hidden">
-    {screen === "form" && <><CardHeader className="pb-4"><div className="mb-2 flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary"><Music2 /></div><CardTitle>Make your music box</CardTitle><CardDescription>Paste a YouTube link. We’ll transcribe the music and create a printable cylinder.</CardDescription></CardHeader><CardContent><form onSubmit={submit} className="space-y-4"><label htmlFor="youtube-url" className="text-sm font-semibold">YouTube URL</label><Input id="youtube-url" type="url" inputMode="url" placeholder="https://www.youtube.com/watch?v=…" value={url} onChange={(event) => setUrl(event.target.value)} aria-invalid={Boolean(message)} aria-describedby={message ? "url-error" : undefined} autoFocus />{message && <p id="url-error" className="flex items-center gap-2 text-sm text-destructive"><AlertCircle className="h-4 w-4" />{message}</p>}<Button className="w-full" size="lg" type="submit"><Sparkles className="h-4 w-4" />Create MIDI & cylinder</Button><p className="text-center text-xs text-muted-foreground">Processing usually takes a few minutes. No account needed.</p></form></CardContent></>}
-    {screen === "working" && <><CardHeader><div className="flex items-center gap-3"><div className="h-3 w-3 animate-pulse rounded-full bg-primary" /><CardTitle>{job ? STATUS[job.status].label : "Starting transcription"}</CardTitle></div><CardDescription>{job ? STATUS[job.status].detail : "Sending your video to the transcriber…"}</CardDescription></CardHeader><CardContent className="space-y-5"><Progress value={job?.progress ?? 0} /><div className="flex justify-between text-sm"><span className="text-muted-foreground">{job?.title || "YouTube video"}</span><span className="font-semibold">{job?.progress ?? 0}%</span></div>{connectionWarning && <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">Connection interrupted. Retrying automatically…</p>}<p className="text-sm text-muted-foreground">You can keep this tab open while we work. Longer videos may take several minutes.</p></CardContent></>}
-    {screen === "done" && job && <><CardHeader><div className="mb-2 flex h-12 w-12 items-center justify-center rounded-full bg-emerald-100 text-emerald-700"><Check /></div><CardTitle>Your music box is ready</CardTitle><CardDescription>{job.title || "Your transcription completed successfully."}</CardDescription></CardHeader><CardContent className="space-y-5"><div className="rounded-xl border bg-muted/40 p-4"><p className="mb-3 text-sm font-semibold">Listen before you download</p><MidiPlayer url={midiUrl} /></div><div className="grid gap-3 sm:grid-cols-2"><Button asChild><a href={midiUrl} download><Download className="h-4 w-4" />Download MIDI</a></Button><Button asChild variant="outline"><a href={stlUrl} download><Download className="h-4 w-4" />Download STL cylinder</a></Button></div><Button className="w-full" variant="ghost" onClick={reset}><RotateCcw className="h-4 w-4" />Transcribe another video</Button></CardContent></>}
-    {screen === "error" && <><CardHeader><div className="mb-2 flex h-12 w-12 items-center justify-center rounded-full bg-red-100 text-destructive"><AlertCircle /></div><CardTitle>We hit a snag</CardTitle><CardDescription>{message || "We couldn’t complete your transcription."}</CardDescription></CardHeader><CardContent className="flex gap-3"><Button onClick={reset}>Try another video</Button>{job && <Button variant="outline" onClick={() => { failures.current = 0; setScreen("working"); void poll(job.id); }}>Retry</Button>}</CardContent></>}
-  </Card>;
+  const status = job ? statusCopy[job.status] : null;
+  const failed = job?.status === "failed";
+  const done = job?.status === "done";
+
+  return (
+    <Card className="w-full max-w-2xl overflow-hidden">
+      <CardHeader className="border-b bg-white/60">
+        <div className="flex items-center gap-3 text-sm font-semibold text-primary">
+          <span className="grid h-9 w-9 place-items-center rounded-full bg-primary text-primary-foreground"><Music2 className="h-5 w-5" /></span>
+          MAGGYBOX
+        </div>
+        <h1 className="pt-3 text-3xl font-bold tracking-tight sm:text-4xl">Turn a YouTube melody into a music box.</h1>
+        <p className="max-w-xl text-muted-foreground">Paste a video link. We’ll create a playable MIDI and a cylinder ready for 3D printing.</p>
+      </CardHeader>
+
+      <CardContent className="pt-6 sm:pt-8">
+        {!job ? (
+          <form onSubmit={submit} className="space-y-4">
+            <div className="space-y-2">
+              <label htmlFor="youtube-url" className="text-sm font-semibold">YouTube URL</label>
+              <Input id="youtube-url" type="url" inputMode="url" autoComplete="url" value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://www.youtube.com/watch?v=…" aria-invalid={Boolean(error)} disabled={submitting} />
+            </div>
+            {error ? <p className="rounded-md border border-destructive/20 bg-destructive/5 p-3 text-sm text-destructive" role="alert">{error}</p> : null}
+            <Button className="w-full" size="lg" disabled={submitting || !url.trim()}>
+              {submitting ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+              {submitting ? "Starting transcription…" : "Create my music box"}
+            </Button>
+            <p className="text-center text-xs text-muted-foreground">Public YouTube videos only. Processing may take several minutes.</p>
+          </form>
+        ) : (
+          <div className="space-y-6">
+            <div className="flex items-start gap-4">
+              <span className="mt-0.5 grid h-11 w-11 shrink-0 place-items-center rounded-full bg-primary/10 text-primary">
+                {done ? <Check className="h-6 w-6" /> : failed ? <RefreshCw className="h-5 w-5" /> : <LoaderCircle className="h-6 w-6 animate-spin" />}
+              </span>
+              <div>
+                <h2 className="text-xl font-bold">{status?.title}</h2>
+                <p className="mt-1 text-sm text-muted-foreground">{failed && job.errorMessage ? job.errorMessage : status?.detail}</p>
+              </div>
+            </div>
+
+            {!done && !failed ? (
+              <div className="space-y-3">
+                <div className="flex justify-between text-sm"><span>{job.progress}% complete</span><span className="text-muted-foreground">Keep this tab open</span></div>
+                <Progress value={job.progress} />
+                {error ? <p className="rounded-md bg-amber-50 p-3 text-sm text-amber-800" role="status">Connection is unstable. We’ll keep retrying automatically.</p> : null}
+              </div>
+            ) : null}
+
+            {done ? (
+              <div className="space-y-4">
+                <MidiPlayer src={assetUrl(job, "midi")} />
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Button asChild><a href={assetUrl(job, "midi")} download><Download className="h-4 w-4" />Download MIDI</a></Button>
+                  <Button asChild variant="outline"><a href={assetUrl(job, "stl")} download><Download className="h-4 w-4" />Download STL cylinder</a></Button>
+                </div>
+              </div>
+            ) : null}
+
+            {failed ? <p className="rounded-md border border-destructive/20 bg-destructive/5 p-3 text-sm text-destructive" role="alert">{friendlyErrors[job.errorCode ?? ""] ?? job.errorMessage ?? status?.detail}</p> : null}
+
+            {(done || failed) ? <Button type="button" variant="ghost" className="w-full" onClick={reset}>Transcribe another video</Button> : null}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
 }

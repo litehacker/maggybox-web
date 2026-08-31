@@ -4,21 +4,21 @@
 
 @layer base {
   :root {
-    --background: 42 40% 97%;
-    --foreground: 222 35% 14%;
-    --border: 36 24% 86%;
-    --primary: 264 70% 52%;
+    --background: 40 33% 98%;
+    --foreground: 230 24% 14%;
+    --card: 0 0% 100%;
+    --card-foreground: 230 24% 14%;
+    --primary: 262 70% 48%;
     --primary-foreground: 0 0% 100%;
-    --muted: 40 24% 92%;
-    --muted-foreground: 220 10% 42%;
-    --destructive: 0 72% 51%;
+    --muted: 240 12% 94%;
+    --muted-foreground: 230 10% 42%;
+    --destructive: 0 72% 48%;
     --destructive-foreground: 0 0% 100%;
+    --border: 240 12% 88%;
+    --input: 240 12% 82%;
+    --ring: 262 70% 48%;
     --radius: 0.9rem;
   }
   * { @apply border-border; }
-  body { @apply min-h-screen bg-background text-foreground antialiased; }
-}
-
-body {
-  background-image: radial-gradient(circle at 15% 10%, rgba(124, 58, 237, .10), transparent 28rem), radial-gradient(circle at 90% 90%, rgba(245, 158, 11, .10), transparent 25rem);
+  body { @apply bg-background text-foreground antialiased; }
 }
