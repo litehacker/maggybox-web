@@ -1,12 +1,9 @@
 /**
  * Stage B — transcribing.
  *
- * Preferred engine: Spotify basic-pitch (Apache-2.0, polyphonic, CPU, emits
- * MIDI directly), invoked as a Python subprocess.
- *
- * Fallback for melody-dominant material: librosa pyin monophonic pitch track
- * → note segmentation → pretty_midi. Both engines preserve absolute note
- * pitch and timing.
+ * Preferred engine: MaggyBox melody decoder (HPSS + CQT salience + CREPE,
+ * fused contour, SuperFlux note splits). Falls back to librosa pYIN, then
+ * Spotify basic-pitch as a last resort (it emits extra non-melody notes).
  */
 import { spawn } from "node:child_process";
 import { mkdir, readdir, readFile } from "node:fs/promises";
@@ -18,7 +15,11 @@ import { PipelineError } from "./extract.js";
 
 export interface TranscribeResult {
   midi: Buffer;
-  method: "basic-pitch" | "librosa-pyin";
+  method: "melody-decoder" | "librosa-pyin" | "basic-pitch";
+}
+
+function pythonDir(): string {
+  return path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "python");
 }
 
 function run(
@@ -59,10 +60,19 @@ async function pythonHasModule(pythonBin: string, moduleName: string): Promise<b
   }
 }
 
+async function runPythonScript(scriptName: string, wavPath: string, outPath: string): Promise<Buffer> {
+  const scriptPath = path.join(pythonDir(), scriptName);
+  const { code, stderr } = await run(config.pythonBin, [scriptPath, wavPath, outPath]);
+  if (code !== 0) {
+    const detail = stderr.slice(-300).trim() || `exit ${code}`;
+    throw new PipelineError("TRANSCRIPTION_FAILED", `${scriptName} failed: ${detail}`);
+  }
+  return readFile(outPath);
+}
+
 /**
  * basic-pitch CLI (spotify/basic-pitch): `basic-pitch <output-dir> <audio>`,
- * writes `<name>_basic_pitch.mid` into the output dir. The console script may
- * not be on PATH in all environments, so try it, then `python -m basic_pitch`.
+ * writes `<name>_basic_pitch.mid` into the output dir. Last-resort only.
  */
 async function basicPitch(wavPath: string, workDir: string): Promise<Buffer | null> {
   const pythonBin = config.pythonBin;
@@ -91,50 +101,59 @@ async function basicPitch(wavPath: string, workDir: string): Promise<Buffer | nu
       lastError = `${attempt.cmd} exited ${code}: ${stderr.slice(-300).trim()}`;
     } catch (err) {
       if (err instanceof PipelineError) throw err;
-      // ENOENT etc. — try the next invocation form.
       lastError = err instanceof Error ? err.message : String(err);
     }
   }
   throw new PipelineError("TRANSCRIPTION_FAILED", `basic-pitch failed: ${lastError ?? "unknown error"}`);
 }
 
-async function librosaFallback(wavPath: string, workDir: string): Promise<Buffer> {
-  const pythonBin = config.pythonBin;
-  const hasLibrosa = await pythonHasModule(pythonBin, "librosa");
-  const hasPrettyMidi = await pythonHasModule(pythonBin, "pretty_midi");
+async function melodyDecoder(wavPath: string, workDir: string): Promise<Buffer> {
+  const hasLibrosa = await pythonHasModule(config.pythonBin, "librosa");
+  const hasPrettyMidi = await pythonHasModule(config.pythonBin, "pretty_midi");
   if (!hasLibrosa || !hasPrettyMidi) {
     throw new PipelineError(
       "TRANSCRIPTION_FAILED",
-      "No transcription backend available: install basic-pitch, or librosa + pretty_midi",
+      "Melody decoder requires librosa + pretty_midi",
     );
   }
+  return runPythonScript("melody_transcribe.py", wavPath, path.join(workDir, "melody.mid"));
+}
 
-  const scriptPath = path.join(
-    path.dirname(fileURLToPath(import.meta.url)),
-    "..",
-    "..",
-    "python",
-    "fallback_transcribe.py",
-  );
-  const outPath = path.join(workDir, "fallback.mid");
-  const { code, stderr } = await run(pythonBin, [scriptPath, wavPath, outPath]);
-  if (code !== 0) {
-    throw new PipelineError("TRANSCRIPTION_FAILED", `librosa transcription failed: ${stderr.slice(-300).trim()}`);
+async function librosaFallback(wavPath: string, workDir: string): Promise<Buffer> {
+  const hasLibrosa = await pythonHasModule(config.pythonBin, "librosa");
+  const hasPrettyMidi = await pythonHasModule(config.pythonBin, "pretty_midi");
+  if (!hasLibrosa || !hasPrettyMidi) {
+    throw new PipelineError(
+      "TRANSCRIPTION_FAILED",
+      "No transcription backend available: install librosa + pretty_midi",
+    );
   }
-  return readFile(outPath);
+  return runPythonScript("fallback_transcribe.py", wavPath, path.join(workDir, "fallback.mid"));
 }
 
 export async function transcribeToMidi(wavPath: string, workDir: string): Promise<TranscribeResult> {
   try {
-    const midi = await basicPitch(wavPath, workDir);
-    if (midi) return { midi, method: "basic-pitch" };
-    console.log("[worker] basic-pitch not installed — falling back to librosa pyin");
+    const midi = await melodyDecoder(wavPath, workDir);
+    return { midi, method: "melody-decoder" };
   } catch (err) {
-    if (err instanceof PipelineError && err.code === "TRANSCRIPTION_FAILED") {
-      console.error("[worker] basic-pitch failed, trying librosa fallback:", err.message);
-    } else {
-      throw err;
-    }
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[worker] melody decoder failed, trying pYIN fallback:", message);
   }
-  return { midi: await librosaFallback(wavPath, workDir), method: "librosa-pyin" };
+
+  try {
+    const midi = await librosaFallback(wavPath, workDir);
+    return { midi, method: "librosa-pyin" };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[worker] pYIN fallback failed, trying basic-pitch:", message);
+  }
+
+  const midi = await basicPitch(wavPath, workDir);
+  if (!midi) {
+    throw new PipelineError(
+      "TRANSCRIPTION_FAILED",
+      "No transcription backend available: melody decoder, pYIN, and basic-pitch all failed",
+    );
+  }
+  return { midi, method: "basic-pitch" };
 }

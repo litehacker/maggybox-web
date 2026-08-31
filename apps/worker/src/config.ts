@@ -45,7 +45,7 @@ export const config = {
   pollIntervalMs: intFromEnv("WORKER_POLL_INTERVAL_MS", 2000),
   /** Hard cap on source video length in seconds. */
   maxVideoSeconds: intFromEnv("MAX_VIDEO_SECONDS", 600),
-  /** Python interpreter used to invoke basic-pitch / librosa. */
+  /** Python interpreter used to invoke the melody decoder / librosa. */
   pythonBin: process.env.PYTHON_BIN ?? (process.platform === "win32" ? "python" : "python3"),
   /** Lowest MIDI note on the reference music-box comb (C3). */
   combLowMidi: intFromEnv("MUSIC_BOX_COMB_LOW_MIDI", 48),

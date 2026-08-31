@@ -33,6 +33,19 @@ Job progress states: `queued → extracting → transcribing → generating_cyli
 
 Full spec (API contract, data model, deploy topology, env vars): **Jira MAG-7**.
 
+## Local development
+
+```sh
+npm install
+npm run dev
+```
+
+That single command starts Postgres (Docker), applies migrations, installs worker Python tools if needed, then runs the web app and queue worker together. Open http://localhost:3000.
+
+Requires **Docker Desktop**, **Node 20+**, and **Python 3**. ffmpeg is bundled via npm; yt-dlp and the librosa transcription fallback come from `apps/worker/python/requirements.txt`.
+
+Use `npm run dev:web` or `npm run dev:worker` to run one side on its own.
+
 ## Repo layout (npm workspaces)
 
 ```

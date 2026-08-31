@@ -2,7 +2,7 @@
  * Stage A — extracting.
  *
  * yt-dlp pulls bestaudio (no YouTube Data API key required), then ffmpeg
- * transcodes to 22.05 kHz mono WAV for transcription. MAX_VIDEO_SECONDS is
+ * transcodes to 16 kHz mono WAV for the melody decoder. MAX_VIDEO_SECONDS is
  * enforced against the stream metadata before download.
  */
 import { createRequire } from "node:module";
@@ -214,10 +214,10 @@ export async function extractAudio(youtubeUrl: string, workDir: string): Promise
     }
   }
 
-  // 3) Transcode to 22.05 kHz mono WAV (transcription input format).
+  // 3) Transcode to 16 kHz mono WAV (CREPE / melody decoder native rate).
   const wavPath = path.join(workDir, "audio.wav");
   try {
-    await run(resolveTool("ffmpeg"), ["-y", "-i", sourcePath, "-vn", "-ac", "1", "-ar", "22050", wavPath], 10 * 60 * 1000);
+    await run(resolveTool("ffmpeg"), ["-y", "-i", sourcePath, "-vn", "-ac", "1", "-ar", "16000", wavPath], 10 * 60 * 1000);
   } catch (err) {
     if (err instanceof PipelineError) {
       throw new PipelineError("DOWNLOAD_FAILED", `ffmpeg transcode failed: ${err.message}`);

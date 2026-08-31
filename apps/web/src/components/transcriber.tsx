@@ -57,6 +57,22 @@ export function Transcriber() {
   const failures = useRef(0);
 
   useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get("job");
+    if (!id) return;
+    let cancelled = false;
+    fetch(`/api/transcriptions/${id}`, { cache: "no-store" })
+      .then((response) => response.json())
+      .then((data) => {
+        const parsed = TranscriptionDTO.safeParse(data);
+        if (!cancelled && parsed.success) setJob(parsed.data);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
     if (!job || job.status === "done" || job.status === "failed") return;
     let active = true;
     const controller = new AbortController();
@@ -125,7 +141,7 @@ export function Transcriber() {
   const done = job?.status === "done";
 
   return (
-    <Card className="w-full max-w-2xl overflow-hidden">
+    <Card className={`w-full overflow-hidden ${done ? "max-w-4xl" : "max-w-2xl"}`}>
       <CardHeader className="border-b bg-white/60">
         <div className="flex items-center gap-3 text-sm font-semibold text-primary">
           <span className="grid h-9 w-9 place-items-center rounded-full bg-primary text-primary-foreground"><Music2 className="h-5 w-5" /></span>
@@ -171,7 +187,7 @@ export function Transcriber() {
 
             {done ? (
               <div className="space-y-4">
-                <MidiPlayer src={assetUrl(job, "midi")} />
+                <MidiPlayer src={assetUrl(job, "midi")} durationSec={job.durationSec} />
                 <div className="grid gap-3 sm:grid-cols-2">
                   <Button asChild><a href={assetUrl(job, "midi")} download><Download className="h-4 w-4" />Download MIDI</a></Button>
                   <Button asChild variant="outline"><a href={assetUrl(job, "stl")} download><Download className="h-4 w-4" />Download STL cylinder</a></Button>
