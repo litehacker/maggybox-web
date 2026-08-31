@@ -1,0 +1,25 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 42 36% 96%;
+    --foreground: 225 20% 14%;
+    --primary: 262 62% 48%;
+    --primary-foreground: 0 0% 100%;
+    --muted: 40 20% 91%;
+    --muted-foreground: 220 10% 42%;
+    --destructive: 0 72% 50%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 35 18% 82%;
+    --radius: 1rem;
+  }
+  * { @apply border-border; }
+  body { @apply bg-background text-foreground antialiased; }
+}
+
+.music-grid {
+  background-image: linear-gradient(hsl(var(--border) / .35) 1px, transparent 1px), linear-gradient(90deg, hsl(var(--border) / .35) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
