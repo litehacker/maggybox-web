@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "MaggyBox — YouTube to music box",
+  title: "MaggyBox — YouTube to MIDI",
   description: "Turn a YouTube video into MIDI and a printable music-box cylinder.",
 };
 

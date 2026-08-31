@@ -4,22 +4,21 @@
 
 @layer base {
   :root {
-    --background: 42 36% 96%;
-    --foreground: 225 20% 14%;
-    --primary: 262 62% 48%;
+    --background: 42 40% 97%;
+    --foreground: 222 35% 14%;
+    --border: 36 24% 86%;
+    --primary: 264 70% 52%;
     --primary-foreground: 0 0% 100%;
-    --muted: 40 20% 91%;
+    --muted: 40 24% 92%;
     --muted-foreground: 220 10% 42%;
-    --destructive: 0 72% 50%;
+    --destructive: 0 72% 51%;
     --destructive-foreground: 0 0% 100%;
-    --border: 35 18% 82%;
-    --radius: 1rem;
+    --radius: 0.9rem;
   }
   * { @apply border-border; }
-  body { @apply bg-background text-foreground antialiased; }
+  body { @apply min-h-screen bg-background text-foreground antialiased; }
 }
 
-.music-grid {
-  background-image: linear-gradient(hsl(var(--border) / .35) 1px, transparent 1px), linear-gradient(90deg, hsl(var(--border) / .35) 1px, transparent 1px);
-  background-size: 32px 32px;
+body {
+  background-image: radial-gradient(circle at 15% 10%, rgba(124, 58, 237, .10), transparent 28rem), radial-gradient(circle at 90% 90%, rgba(245, 158, 11, .10), transparent 25rem);
 }
