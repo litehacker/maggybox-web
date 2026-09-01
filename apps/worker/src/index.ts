@@ -3,8 +3,8 @@
  *
  * Single long-lived Node process, concurrency = 1. Polls Postgres for the
  * oldest queued job (SKIP LOCKED claim), then runs:
- *   A. extracting          — yt-dlp bestaudio → ffmpeg 16 kHz mono WAV
- *   B. transcribing        — melody decoder (fallback: pYIN, then basic-pitch) → MIDI
+ *   A. extracting          — yt-dlp bestaudio → ffmpeg 22.05 kHz mono WAV
+ *   B. transcribing        — Basic Pitch → deterministic melody MIDI
  *   C. generating_cylinder — MIDI → quantized pinned-drum STL
  *
  * Source audio is transient and deleted after transcription; only MIDI + STL

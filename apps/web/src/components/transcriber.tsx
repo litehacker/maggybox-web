@@ -1,7 +1,16 @@
 "use client";
 
 import { FormEvent, useEffect, useRef, useState } from "react";
-import { Check, Download, LoaderCircle, Music2, RefreshCw, Sparkles } from "lucide-react";
+import {
+  Check,
+  Download,
+  Library,
+  LoaderCircle,
+  Music2,
+  RefreshCw,
+  Sparkles,
+  Trash2,
+} from "lucide-react";
 import {
   CreateTranscriptionRequest,
   ErrorEnvelope,
@@ -14,6 +23,9 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { MidiPlayer } from "@/components/midi-player";
+
+const HISTORY_KEY = "maggybox-transcription-history";
+const HISTORY_LIMIT = 20;
 
 const statusCopy: Record<JobStatus, { title: string; detail: string }> = {
   queued: { title: "Queued", detail: "Your track is waiting for a worker." },
@@ -49,9 +61,40 @@ function assetUrl(job: Transcription, kind: "midi" | "stl") {
   return supplied || `/api/transcriptions/${job.id}/${kind}`;
 }
 
+function readHistoryIds(): string[] {
+  try {
+    const value: unknown = JSON.parse(window.localStorage.getItem(HISTORY_KEY) ?? "[]");
+    if (!Array.isArray(value)) return [];
+    return value.filter((id): id is string => typeof id === "string").slice(0, HISTORY_LIMIT);
+  } catch {
+    return [];
+  }
+}
+
+function writeHistoryIds(ids: string[]): void {
+  try {
+    window.localStorage.setItem(HISTORY_KEY, JSON.stringify(ids.slice(0, HISTORY_LIMIT)));
+  } catch {
+    // Browsing can continue when local storage is disabled.
+  }
+}
+
+function rememberHistoryId(id: string): void {
+  writeHistoryIds([id, ...readHistoryIds().filter((savedId) => savedId !== id)]);
+}
+
+function formatDuration(seconds: number | null): string {
+  if (!seconds) return "Duration unavailable";
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  return `${minutes}:${remainder.toString().padStart(2, "0")}`;
+}
+
 export function Transcriber() {
   const [url, setUrl] = useState("");
   const [job, setJob] = useState<Transcription | null>(null);
+  const [savedJobs, setSavedJobs] = useState<Transcription[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const failures = useRef(0);
@@ -59,8 +102,9 @@ export function Transcriber() {
   useEffect(() => {
     const id = new URLSearchParams(window.location.search).get("job");
     if (!id) return;
+    rememberHistoryId(id);
     let cancelled = false;
-    fetch(`/api/transcriptions/${id}`, { cache: "no-store" })
+    fetch(`/api/transcriptions/${encodeURIComponent(id)}`, { cache: "no-store" })
       .then((response) => response.json())
       .then((data) => {
         const parsed = TranscriptionDTO.safeParse(data);
@@ -69,6 +113,34 @@ export function Transcriber() {
       .catch(() => {});
     return () => {
       cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    const ids = readHistoryIds();
+    Promise.all(
+      ids.map(async (id) => {
+        try {
+          const response = await fetch(`/api/transcriptions/${encodeURIComponent(id)}`, {
+            cache: "no-store",
+          });
+          if (!response.ok) return null;
+          const parsed = TranscriptionDTO.safeParse(await response.json());
+          return parsed.success && parsed.data.status === "done" ? parsed.data : null;
+        } catch {
+          return null;
+        }
+      }),
+    ).then((items) => {
+      if (!active) return;
+      const completed = items.filter((item): item is Transcription => item !== null);
+      setSavedJobs(completed);
+      writeHistoryIds(completed.map((item) => item.id));
+      setLoadingHistory(false);
+    });
+    return () => {
+      active = false;
     };
   }, []);
 
@@ -101,6 +173,15 @@ export function Transcriber() {
     };
   }, [job?.id, job?.status]);
 
+  useEffect(() => {
+    if (!job || job.status !== "done") return;
+    rememberHistoryId(job.id);
+    setSavedJobs((current) => [
+      job,
+      ...current.filter((saved) => saved.id !== job.id),
+    ].slice(0, HISTORY_LIMIT));
+  }, [job]);
+
   async function submit(event: FormEvent) {
     event.preventDefault();
     setError(null);
@@ -121,6 +202,8 @@ export function Transcriber() {
       const parsed = TranscriptionDTO.safeParse(await response.json());
       if (!parsed.success) throw new Error("The service returned an unexpected response.");
       failures.current = 0;
+      rememberHistoryId(parsed.data.id);
+      window.history.replaceState(null, "", `?job=${encodeURIComponent(parsed.data.id)}`);
       setJob(parsed.data);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Can’t reach the service. Please try again.");
@@ -134,6 +217,20 @@ export function Transcriber() {
     setJob(null);
     setError(null);
     setUrl("");
+    window.history.replaceState(null, "", window.location.pathname);
+  }
+
+  function openSaved(saved: Transcription) {
+    setError(null);
+    setJob(saved);
+    rememberHistoryId(saved.id);
+    window.history.replaceState(null, "", `?job=${encodeURIComponent(saved.id)}`);
+  }
+
+  function forgetSaved(id: string) {
+    const remaining = savedJobs.filter((saved) => saved.id !== id);
+    setSavedJobs(remaining);
+    writeHistoryIds(remaining.map((saved) => saved.id));
   }
 
   const status = job ? statusCopy[job.status] : null;
@@ -153,18 +250,65 @@ export function Transcriber() {
 
       <CardContent className="pt-6 sm:pt-8">
         {!job ? (
-          <form onSubmit={submit} className="space-y-4">
-            <div className="space-y-2">
-              <label htmlFor="youtube-url" className="text-sm font-semibold">YouTube URL</label>
-              <Input id="youtube-url" type="url" inputMode="url" autoComplete="url" value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://www.youtube.com/watch?v=…" aria-invalid={Boolean(error)} disabled={submitting} />
-            </div>
-            {error ? <p className="rounded-md border border-destructive/20 bg-destructive/5 p-3 text-sm text-destructive" role="alert">{error}</p> : null}
-            <Button className="w-full" size="lg" disabled={submitting || !url.trim()}>
-              {submitting ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-              {submitting ? "Starting transcription…" : "Create my music box"}
-            </Button>
-            <p className="text-center text-xs text-muted-foreground">Public YouTube videos only. Processing may take several minutes.</p>
-          </form>
+          <div className="space-y-6">
+            {loadingHistory || savedJobs.length > 0 ? (
+              <section className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <Library className="h-4 w-4 text-primary" />
+                  <div>
+                    <h2 className="font-semibold">Your saved transcriptions</h2>
+                    <p className="text-xs text-muted-foreground">History saved only in this browser.</p>
+                  </div>
+                </div>
+                {loadingHistory ? (
+                  <div className="rounded-lg border bg-muted/30 p-4 text-sm text-muted-foreground">
+                    Loading your saved music…
+                  </div>
+                ) : (
+                  <div className="grid gap-2">
+                    {savedJobs.map((saved) => (
+                      <div key={saved.id} className="flex items-center gap-2 rounded-lg border bg-white/50 p-2">
+                        <button
+                          type="button"
+                          className="min-w-0 flex-1 rounded-md px-2 py-1.5 text-left hover:bg-muted"
+                          onClick={() => openSaved(saved)}
+                        >
+                          <span className="block truncate text-sm font-semibold">
+                            {saved.title || "Untitled transcription"}
+                          </span>
+                          <span className="text-xs text-muted-foreground">
+                            {formatDuration(saved.durationSec)} · Open MIDI
+                          </span>
+                        </button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          aria-label={`Forget ${saved.title || "transcription"}`}
+                          onClick={() => forgetSaved(saved.id)}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
+            ) : null}
+
+            <form onSubmit={submit} className="space-y-4 border-t pt-6">
+              <div className="space-y-2">
+                <label htmlFor="youtube-url" className="text-sm font-semibold">Add another YouTube URL</label>
+                <Input id="youtube-url" type="url" inputMode="url" autoComplete="url" value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://www.youtube.com/watch?v=…" aria-invalid={Boolean(error)} disabled={submitting} />
+              </div>
+              {error ? <p className="rounded-md border border-destructive/20 bg-destructive/5 p-3 text-sm text-destructive" role="alert">{error}</p> : null}
+              <Button className="w-full" size="lg" disabled={submitting || !url.trim()}>
+                {submitting ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                {submitting ? "Starting transcription…" : "Create my music box"}
+              </Button>
+              <p className="text-center text-xs text-muted-foreground">Public YouTube videos only. Processing may take several minutes.</p>
+            </form>
+          </div>
         ) : (
           <div className="space-y-6">
             <div className="flex items-start gap-4">

@@ -27,7 +27,7 @@ Job progress states: `queued → extracting → transcribing → generating_cyli
 
 ## Architecture (summary)
 - Web (Vercel): Next.js UI + thin API routes.
-- Worker (off-Vercel, always-on): yt-dlp + ffmpeg, audio→MIDI (Spotify basic-pitch), MIDI→STL cylinder generation.
+- Worker (off-Vercel, always-on): yt-dlp + ffmpeg, Spotify Basic Pitch with deterministic melody filtering, then MIDI→STL.
 - Postgres (+ Prisma): job/state store and v1 job queue (SKIP LOCKED).
 - Object storage: MIDI + STL artifacts (DB holds keys only).
 

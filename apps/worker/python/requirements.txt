@@ -4,5 +4,3 @@ librosa
 pretty_midi
 soundfile
 numpy
-scipy
-torchcrepe

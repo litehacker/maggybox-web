@@ -1,9 +1,8 @@
 /**
  * Stage B — transcribing.
  *
- * Preferred engine: MaggyBox melody decoder (HPSS + CQT salience + CREPE,
- * fused contour, SuperFlux note splits). Falls back to librosa pYIN, then
- * Spotify basic-pitch as a last resort (it emits extra non-melody notes).
+ * Preferred engine: Spotify Basic Pitch (ICASSP 2022) with deterministic
+ * accompaniment filtering. pYIN and the basic-pitch CLI remain fallbacks.
  */
 import { spawn } from "node:child_process";
 import { mkdir, readdir, readFile } from "node:fs/promises";
@@ -60,7 +59,11 @@ async function pythonHasModule(pythonBin: string, moduleName: string): Promise<b
   }
 }
 
-async function runPythonScript(scriptName: string, wavPath: string, outPath: string): Promise<Buffer> {
+async function runPythonScript(
+  scriptName: string,
+  wavPath: string,
+  outPath: string,
+): Promise<Buffer> {
   const scriptPath = path.join(pythonDir(), scriptName);
   const { code, stderr } = await run(config.pythonBin, [scriptPath, wavPath, outPath]);
   if (code !== 0) {
@@ -107,7 +110,10 @@ async function basicPitch(wavPath: string, workDir: string): Promise<Buffer | nu
   throw new PipelineError("TRANSCRIPTION_FAILED", `basic-pitch failed: ${lastError ?? "unknown error"}`);
 }
 
-async function melodyDecoder(wavPath: string, workDir: string): Promise<Buffer> {
+async function melodyDecoder(
+  wavPath: string,
+  workDir: string,
+): Promise<TranscribeResult> {
   const hasLibrosa = await pythonHasModule(config.pythonBin, "librosa");
   const hasPrettyMidi = await pythonHasModule(config.pythonBin, "pretty_midi");
   if (!hasLibrosa || !hasPrettyMidi) {
@@ -116,7 +122,12 @@ async function melodyDecoder(wavPath: string, workDir: string): Promise<Buffer> 
       "Melody decoder requires librosa + pretty_midi",
     );
   }
-  return runPythonScript("melody_transcribe.py", wavPath, path.join(workDir, "melody.mid"));
+  const midi = await runPythonScript(
+    "melody_transcribe.py",
+    wavPath,
+    path.join(workDir, "melody.mid"),
+  );
+  return { midi, method: "melody-decoder" };
 }
 
 async function librosaFallback(wavPath: string, workDir: string): Promise<Buffer> {
@@ -131,10 +142,12 @@ async function librosaFallback(wavPath: string, workDir: string): Promise<Buffer
   return runPythonScript("fallback_transcribe.py", wavPath, path.join(workDir, "fallback.mid"));
 }
 
-export async function transcribeToMidi(wavPath: string, workDir: string): Promise<TranscribeResult> {
+export async function transcribeToMidi(
+  wavPath: string,
+  workDir: string,
+): Promise<TranscribeResult> {
   try {
-    const midi = await melodyDecoder(wavPath, workDir);
-    return { midi, method: "melody-decoder" };
+    return await melodyDecoder(wavPath, workDir);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("[worker] melody decoder failed, trying pYIN fallback:", message);
