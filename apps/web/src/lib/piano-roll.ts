@@ -1,10 +1,9 @@
 /**
  * Piano-roll model for transcribed MIDI.
  *
- * Melody → piano notes (what the worker already writes as MIDI):
- *   1. Estimate pitch (Hz) from the melody decoder (CQT salience + CREPE).
- *   2. Convert to a piano key: midi = 69 + 12 * log2(f / 440).
- *   3. Each event is one key press: pitch + onset time + duration + velocity.
+ * The worker writes two internally monophonic MIDI tracks: Lead Melody and
+ * Lower Accompaniment. Playback and display intentionally flatten both tracks
+ * into one time-ordered collection of piano key presses.
  *
  * Display: vertical = piano key (high notes at the top), horizontal = time.
  * Every transcribed note is a pin. Nothing is dropped or dual-coded.

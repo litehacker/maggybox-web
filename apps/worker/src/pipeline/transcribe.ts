@@ -1,20 +1,21 @@
 /**
  * Stage B — transcribing.
  *
- * Preferred engine: Spotify Basic Pitch (ICASSP 2022) with deterministic
- * accompaniment filtering. pYIN and the basic-pitch CLI remain fallbacks.
+ * A fixed MDX vocal separator improves Spotify Basic Pitch (ICASSP 2022)
+ * lead candidates. Candidates are deterministically split into Lead Melody
+ * and Lower Accompaniment tracks. Full-mix Basic Pitch and pYIN are fallbacks.
  */
 import { spawn } from "node:child_process";
-import { mkdir, readdir, readFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { config } from "../config.js";
-import { PipelineError } from "./extract.js";
+import { PipelineError, resolveTool } from "./extract.js";
 
 export interface TranscribeResult {
   midi: Buffer;
-  method: "melody-decoder" | "librosa-pyin" | "basic-pitch";
+  method: "two-voice-decoder" | "librosa-pyin";
 }
 
 function pythonDir(): string {
@@ -29,7 +30,12 @@ function run(
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, {
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, PYTHONIOENCODING: "utf-8", PYTHONUTF8: "1" },
+      env: {
+        ...process.env,
+        FFMPEG_BIN: resolveTool("ffmpeg"),
+        PYTHONIOENCODING: "utf-8",
+        PYTHONUTF8: "1",
+      },
     });
     let stdout = "";
     let stderr = "";
@@ -73,43 +79,6 @@ async function runPythonScript(
   return readFile(outPath);
 }
 
-/**
- * basic-pitch CLI (spotify/basic-pitch): `basic-pitch <output-dir> <audio>`,
- * writes `<name>_basic_pitch.mid` into the output dir. Last-resort only.
- */
-async function basicPitch(wavPath: string, workDir: string): Promise<Buffer | null> {
-  const pythonBin = config.pythonBin;
-  if (!(await pythonHasModule(pythonBin, "basic_pitch"))) return null;
-
-  const outDir = path.join(workDir, "basic-pitch");
-  await mkdir(outDir, { recursive: true });
-
-  const attempts: Array<{ cmd: string; args: string[] }> = [
-    { cmd: pythonBin, args: ["-m", "basic_pitch.predict", "--model-serialization", "onnx", outDir, wavPath] },
-    { cmd: "basic-pitch", args: ["--model-serialization", "onnx", outDir, wavPath] },
-  ];
-
-  let lastError: string | null = null;
-  for (const attempt of attempts) {
-    try {
-      const { code, stderr } = await run(attempt.cmd, attempt.args);
-      if (code === 0) {
-        const files = await readdir(outDir);
-        const midiFile = files.find((f) => f.toLowerCase().endsWith(".mid"));
-        if (!midiFile) {
-          throw new PipelineError("TRANSCRIPTION_FAILED", "basic-pitch produced no MIDI file");
-        }
-        return readFile(path.join(outDir, midiFile));
-      }
-      lastError = `${attempt.cmd} exited ${code}: ${stderr.slice(-300).trim()}`;
-    } catch (err) {
-      if (err instanceof PipelineError) throw err;
-      lastError = err instanceof Error ? err.message : String(err);
-    }
-  }
-  throw new PipelineError("TRANSCRIPTION_FAILED", `basic-pitch failed: ${lastError ?? "unknown error"}`);
-}
-
 async function melodyDecoder(
   wavPath: string,
   workDir: string,
@@ -127,7 +96,7 @@ async function melodyDecoder(
     wavPath,
     path.join(workDir, "melody.mid"),
   );
-  return { midi, method: "melody-decoder" };
+  return { midi, method: "two-voice-decoder" };
 }
 
 async function librosaFallback(wavPath: string, workDir: string): Promise<Buffer> {
@@ -158,15 +127,9 @@ export async function transcribeToMidi(
     return { midi, method: "librosa-pyin" };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error("[worker] pYIN fallback failed, trying basic-pitch:", message);
-  }
-
-  const midi = await basicPitch(wavPath, workDir);
-  if (!midi) {
     throw new PipelineError(
       "TRANSCRIPTION_FAILED",
-      "No transcription backend available: melody decoder, pYIN, and basic-pitch all failed",
+      `Two-voice decoder and pYIN fallback failed: ${message}`,
     );
   }
-  return { midi, method: "basic-pitch" };
 }

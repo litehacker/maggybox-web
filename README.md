@@ -2,7 +2,7 @@
 
 **MaggyBox is an online YouTube → MIDI transcriber that also produces a 3D-printable pinned cylinder for a music box.**
 
-Paste a YouTube URL and MaggyBox extracts the audio, transcribes it to a downloadable MIDI file, and generates a printable pinned-cylinder STL that can be printed and used in a physical music box to replay the transcribed melody — in one flow, without an account.
+Paste a YouTube URL and MaggyBox extracts the audio, transcribes it to a downloadable two-track MIDI (lead melody plus lower accompaniment), and generates a printable pinned-cylinder STL — in one flow, without an account.
 
 > Product goal & scope: **Jira MAG-13**. Architecture spec: **Jira MAG-7**.
 
@@ -22,12 +22,14 @@ Job progress states: `queued → extracting → transcribing → generating_cyli
 - User accounts, sign-in, payments/monetization.
 - MIDI editing — playback and download only.
 - Non-YouTube sources (file upload, Spotify, etc.).
-- Multi-instrument / arrangement support (v1 targets melody-dominant, monophonic-friendly).
+- Arrangements beyond the fixed lead-melody and lower-accompaniment tracks.
 - Physical printing/laser-cutting services or hardware.
 
 ## Architecture (summary)
 - Web (Vercel): Next.js UI + thin API routes.
-- Worker (off-Vercel, always-on): yt-dlp + ffmpeg, Spotify Basic Pitch with deterministic melody filtering, then MIDI→STL.
+- Worker (off-Vercel, always-on): yt-dlp + ffmpeg, fixed MDX vocal
+  separation, Spotify Basic Pitch with deterministic two-voice decoding, then
+  MIDI→STL.
 - Postgres (+ Prisma): job/state store and v1 job queue (SKIP LOCKED).
 - Object storage: MIDI + STL artifacts (DB holds keys only).
 
@@ -45,6 +47,9 @@ That single command starts Postgres (Docker), applies migrations, installs worke
 Requires **Docker Desktop**, **Node 20+**, and **Python 3**. ffmpeg is bundled via npm; yt-dlp and the librosa transcription fallback come from `apps/worker/python/requirements.txt`.
 
 Use `npm run dev:web` or `npm run dev:worker` to run one side on its own.
+
+Transcription accuracy measurements and known limitations are tracked in
+[`docs/agent/transcription-quality.md`](docs/agent/transcription-quality.md).
 
 ## Repo layout (npm workspaces)
 

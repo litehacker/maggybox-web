@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-Fallback transcriber for MaggyBox (melody-dominant material).
+Fallback transcriber for MaggyBox.
 
 Monophonic pitch tracking via librosa.pyin, note segmentation, MIDI output via
-pretty_midi. Preserves absolute note pitch and timing.
+pretty_midi. Writes the detected line as Lead Melody and leaves the lower
+accompaniment track empty rather than inventing notes.
 
 Usage: python fallback_transcribe.py <input.wav> <output.mid>
 """
@@ -86,7 +87,7 @@ def main() -> int:
 
     segments = transcribe(y, sr)
     pm = pretty_midi.PrettyMIDI()
-    instrument = pretty_midi.Instrument(program=0)
+    instrument = pretty_midi.Instrument(program=0, name="Lead Melody")
     for seg in segments:
         instrument.notes.append(
             pretty_midi.Note(
@@ -97,6 +98,7 @@ def main() -> int:
             )
         )
     pm.instruments.append(instrument)
+    pm.instruments.append(pretty_midi.Instrument(program=0, name="Lower Accompaniment"))
 
     if len(instrument.notes) == 0:
         print("no voiced notes detected", file=sys.stderr)

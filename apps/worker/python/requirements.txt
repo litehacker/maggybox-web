@@ -1,6 +1,8 @@
 yt-dlp[default]
+audio-separator[cpu]
 basic-pitch[onnx]
 librosa
 pretty_midi
 soundfile
 numpy
+setuptools<81

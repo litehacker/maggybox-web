@@ -21,9 +21,7 @@ export async function GET(
   if (!job.midiKey) return notReady("MIDI");
 
   const storage = getStorage();
-  const deterministicKey = `midi/${job.id}.deterministic.mid`;
-  const midiKey = (await storage.get(deterministicKey)) ? deterministicKey : job.midiKey;
-  const location = await storage.getSignedUrl(midiKey, {
+  const location = await storage.getSignedUrl(job.midiKey, {
     contentType: "audio/midi",
     download: true,
   });

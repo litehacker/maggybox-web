@@ -30,6 +30,13 @@ COPY . .
 RUN npx prisma generate --schema packages/db/prisma/schema.prisma \
   && python3 -m pip install --break-system-packages --no-cache-dir -r apps/worker/python/requirements.txt
 
+ENV AUDIO_SEPARATOR_MODEL_DIR=/opt/audio-separator-models
+ENV AUDIO_SEPARATOR_MODEL=Kim_Vocal_2.onnx
+RUN audio-separator \
+  --model_file_dir "$AUDIO_SEPARATOR_MODEL_DIR" \
+  --model_filename "$AUDIO_SEPARATOR_MODEL" \
+  --download_model_only
+
 ENV NODE_ENV=production
 ENV PYTHON_BIN=python3
 

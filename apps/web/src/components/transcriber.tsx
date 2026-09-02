@@ -30,9 +30,9 @@ const HISTORY_LIMIT = 20;
 const statusCopy: Record<JobStatus, { title: string; detail: string }> = {
   queued: { title: "Queued", detail: "Your track is waiting for a worker." },
   extracting: { title: "Extracting audio", detail: "Preparing the audio from your YouTube video." },
-  transcribing: { title: "Transcribing notes", detail: "Turning the melody into a MIDI arrangement." },
+  transcribing: { title: "Transcribing notes", detail: "Separating the lead melody and lower accompaniment into MIDI tracks." },
   generating_cylinder: { title: "Building the cylinder", detail: "Laying out the pins for your printable music-box cylinder." },
-  done: { title: "Your music box is ready", detail: "Preview the MIDI, then download both files." },
+  done: { title: "Your music box is ready", detail: "Preview the two-track MIDI, then download both files." },
   failed: { title: "We couldn’t finish this track", detail: "Try again or use another YouTube video." },
 };
 
@@ -245,7 +245,7 @@ export function Transcriber() {
           MAGGYBOX
         </div>
         <h1 className="pt-3 text-3xl font-bold tracking-tight sm:text-4xl">Turn a YouTube melody into a music box.</h1>
-        <p className="max-w-xl text-muted-foreground">Paste a video link. We’ll create a playable MIDI and a cylinder ready for 3D printing.</p>
+        <p className="max-w-xl text-muted-foreground">Paste a video link. We’ll create a playable lead-and-accompaniment MIDI and a cylinder ready for 3D printing.</p>
       </CardHeader>
 
       <CardContent className="pt-6 sm:pt-8">
